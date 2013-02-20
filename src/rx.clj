@@ -1,5 +1,5 @@
 (ns rx
-  (:refer-clojure :exclude [map filter]))
+  (:refer-clojure :exclude [map filter flatten]))
 
 (defn oseq [xs]
   (fn [onNext onError onCompleted]
@@ -47,6 +47,51 @@
       onError
       onCompleted)))
 
+(defn flatten [xss]
+  (fn [onNext onError onCompleted]
+    (let
+      [
+        subCountRef (ref 1)
+        worker (agent nil)
+        subsRef (ref '())
+        unsubscribe
+          (fn []
+            (dosync
+              (let [subs @subsRef]
+                (when (not (empty? subs))
+                  (ref-set subsRef '())
+                  (send worker (fn [_] (doseq [sub subs] (sub))))))))
+        onChildCompleted
+          (fn[]
+            (dosync
+              (when (> @subCountRef 0)
+                (alter subCountRef - 1)
+                (when (= @subCountRef 0)
+                  (send worker (fn[_] (unsubscribe) (onCompleted)))))))
+        [onError onCompleted]
+          (there-can-only-be-one
+            (fn[error] (send worker (fn [_] (unsubscribe) (onError error))))
+            onChildCompleted)
+        onNext
+          (fn [xs]
+            (dosync
+              (when (> @subCountRef 0)
+                (alter subCountRef + 1)
+                (alter
+                  subsRef
+                  conj
+                  (xs
+                    (fn [item]
+                      (send worker (fn [_] (onNext item))))
+                    onError
+                    onChildCompleted)))))
+      ]
+      (dosync
+        (ref-set
+          subsRef
+          (xss onNext onError onCompleted))
+        unsubscribe))))
+
 (defn map [f & seqs]
   (fn [onNext onError onCompleted]
     (let
@@ -74,9 +119,9 @@
               (fn [o index]
                 (dooseq (materialize o)
                   (fn [msg]
-                    (dosync
-                      (if (= (:kind msg) "onError")
-                        (onError (:value msg))
+                    (if (= (:kind msg) "onError")
+                      (onError (:value msg))
+                      (dosync
                         (do
                           (alter (queues index) conj msg)
                           (when (every? (comp not empty? deref) queues)
@@ -89,4 +134,15 @@
               seqs (range))))
           unsubscribe))))
 
+(defn delay [xs time]
+  (import '(java.util TimerTask Timer))
+  (let timer (new Timer)
+
+    (fn [onNext onError onCompleted]
+      (let [task (proxy [TimerTask] []
+      (run [] (println "Running")))]
+      (. (new Timer) (schedule task (long 3000))))
+
+)
+(dooseq (flatten (oseq [(oseq [1 2 3]) (oseq [4 5 6])])) (fn[x] (print x)))
 (dooseq (map (fn[x y] (print (+ x y))) (oseq [1 2 3]) (oseq [4 5 6])) (fn [x] (print x)))
