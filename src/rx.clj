@@ -89,4 +89,4 @@
               seqs (range))))
           unsubscribe))))
 
-(comment (dbgoseq (map (fn[x y] (print (+ x y))) (oseq [1 2 3]) (oseq [4 5 6]))))
+(dooseq (map (fn[x y] (print (+ x y))) (oseq [1 2 3]) (oseq [4 5 6])) (fn [x] (print x)))
