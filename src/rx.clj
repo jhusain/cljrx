@@ -1,4 +1,5 @@
-(ns rx)
+(ns rx
+  (:refer-clojure :exclude [map filter]))
 
 (defn oseq [xs]
   (fn [onNext onError onCompleted]
@@ -14,31 +15,27 @@
   ([xs onNext onError] (xs onNext onError (fn [])))
   ([xs onNext onError onCompleted] (xs onNext onError onCompleted)))
 
-(defmacro dbgoseq [seq] `(dooseq ~seq print))
-
 (defn materialize [o]
   (fn [onNext onError onCompleted]
     (o
       (fn [x] (onNext {:kind "onNext" :value x}))
       (fn [e]
-        (do
-          (onNext {:kind "onError" :value e})
-          (onCompleted)))
+        (onNext {:kind "onError" :value e})
+        (onCompleted))
       (fn []
-        (do
-          (onNext {:kind "onCompleted"})
-          (onCompleted))))))
+        (onNext {:kind "onCompleted"})
+        (onCompleted)))))
 
 (defn there-can-only-be-one [& fns]
   (let
     [called (ref false)]
     (vec
-      (map
+      (clojure.core/map
         (fn [func]
           (fn [& body]
             (dosync
               (when (not @called)
-                (alter called true)
+                (ref-set called true)
                 (apply func body))
             )))
       fns))))
@@ -67,29 +64,29 @@
             (fn[error] (send worker (fn [_] (unsubscribe) (onError error))))
             (fn[] (send worker (fn[_] (unsubscribe) (onCompleted)))))
         onNext (fn [item] (send worker (fn [_] (onNext item))))
-        queues (vec (map (fn [_] (ref (clojure.lang.PersistentQueue/EMPTY))) seqs))
+        queues (vec (clojure.core/map (fn [_] (ref clojure.lang.PersistentQueue/EMPTY)) seqs))
       ]
-      (comment (dosync
+      (dosync
         (ref-set
           subsRef
           (vec
-            (map
+            (clojure.core/map
               (fn [o index]
                 (dooseq (materialize o)
                   (fn [msg]
                     (dosync
-                      (if (= (get msg :kind) "onError")
-                        (onError (get msg :value))
+                      (if (= (:kind msg) "onError")
+                        (onError (:value msg))
                         (do
                           (alter (queues index) conj msg)
-                          (if (every? (comp not empty? deref) queues)
-                             (let [messages (map (comp pop deref) queues)]
-                               (if (every? (fn [{:keys [kind]}] (= kind "onNext")) messages)
-                                 (onNext (apply f messages))
-                                 (when (some (fn [{:keys [kind]}] (= kind "onCompleted")) messages)
-                                   (onCompleted)))))))))))
+                          (when (every? (comp not empty? deref) queues)
+                            (let [messages (doall (clojure.core/map (comp peek deref) queues))]
+                              (doseq [queue queues] (alter queue pop))
+                              (if (every? (fn [{:keys [kind]}] (= kind "onNext")) messages)
+                                (onNext (apply f (clojure.core/map :value messages)))
+                                (when (some (fn [{:keys [kind]}] (= kind "onCompleted")) messages)
+                                  (onCompleted)))))))))))
               seqs (range))))
-          unsubscribe)))))
+          unsubscribe))))
 
-
-(dbgoseq (map (oseq [1 2 3]) #(+ 1 %)))
+(comment (dbgoseq (map (fn[x y] (print (+ x y))) (oseq [1 2 3]) (oseq [4 5 6]))))
